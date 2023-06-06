@@ -1,0 +1,190 @@
+---
+#
+# Playbook to create an Ansible Execution Environment that will run in Azure Container Registry and on Mac M1 (Apple Silicon)
+#
+# Author: Adam Fordyce
+#
+# Ask user for password to decryot vaulted variables
+# Usage: ansible-playbook azure_setup.yml --ask-vault-pass
+# Or from passwd file in CWD
+# Usage: ansible-playbook azure_setup.yml --vault-id passwd --ask-vault-pass
+#
+- name: Setup Azure
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    - client_secret: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          35396238643436653734313135653031313139393965653232633730343361393261643135343363
+          6138663337363038653036383665316361613732306437620a653936616262663138656232363662
+          31626461633332313430336437656239373939613938653530623132663433653632333234343739
+          3833633735313139610a386137303533366539633735353964623632313661636631323237656634
+          33363330396439346437666338366236386536626566366161643639383862316234313033613836
+          6236376530383863326530353262356231353738363932623164
+    - client_id: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          32316130316364626165613630666465363362336338626137636437613430386135303734626536
+          3836356237663466633539663864613939613337313535630a333934323539313438393433663138
+          37303865313934383163393533616139376462363836643639663434313863636235393938363637
+          6534363230343138380a613532396434343462333366313833663661393634383863323534323164
+          30373365653437373036316265363238303138343631636234663762613864303232656635373265
+          3366363064333363393738626464366665313165373163396264
+    - client_tenant: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          31633137316265313264343861346663356635363035653966663330616631636634333463613434
+          3965663735363133313764356334326162613665323239360a306533643430363637656262356430
+          33663466626133346434356561663066653664343736636337636436613665626330623230376534
+          3537336336653939350a383833313464646238333464333137613137633434613035366661343365
+          37643632393561383263386139363731363865363664613564383739323937613734613764356361
+          3439363635313030373462626138396537613662396536353735
+    - resource_group: "ansible-acr-rg"
+    - location: "uksouth"
+    - acr_name: "afansibleacr"
+    - sku: "Basic"
+    - image_name: "ansible"
+    - image_tag: "latest"
+    - build_dir: "{{ playbook_dir }}"
+  tasks:
+    - name: Check if brew is installed
+      shell: brew --version
+      args:
+        executable: /bin/bash
+      register: brew_installed
+      failed_when: brew_installed.rc != 0
+      changed_when: false
+      when: ansible_os_family == "Darwin"
+
+    - name: Darwin - Brew - Install
+      shell: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      args:
+        executable: /bin/bash
+      when:
+        - ansible_os_family == "Darwin"
+        - brew_installed.rc != 0
+
+    - name: Darwin - Azure CLI - Install on MacOS
+      shell: brew install azure-cli
+      args:
+        executable: /bin/bash
+      when: ansible_os_family == "Darwin"
+      tags:
+        - acr
+
+    - name: Podman - check if installed
+      shell: podman --version
+      args:
+        executable: /bin/bash
+      register: podman_installed
+      failed_when: podman_installed.rc != 0
+      changed_when: false
+
+    - name: Darwin - Podman - Install
+      shell: brew install podman
+      args:
+        executable: /bin/bash
+      when:
+      - podman_installed.rc != 0
+      - ansible_os_family == "Darwin"
+
+    - name: Darwin - Podman - check machine status
+      shell: podman machine info
+      args:
+        executable: /bin/bash
+      register: podman_machine_status
+      failed_when: podman_machine_status.rc != 0
+      changed_when: false
+      when: ansible_os_family == "Darwin"
+
+    - name: Darwin - Podman - init machine
+      shell: podman machine init
+      args:
+        executable: /bin/bash
+      when:
+        - podman_machine_status.rc != 0
+        - ansible_os_family == "Darwin"
+
+    - name: Darwin - Podman - check machine status
+      shell: podman machine info | grep MachineState | awk '{print $2}'
+      args:
+        executable: /bin/bash
+      register: podman_machine_running
+      failed_when: podman_machine_status.rc != 0
+      changed_when: false
+      when: ansible_os_family == "Darwin"
+
+    - name: Darwin - Podman - Start machine
+      shell: podman machine start
+      args:
+        executable: /bin/bash
+      when:
+        - ansible_os_family == "Darwin"
+        - podman_machine_running.stdout != "Running"
+
+    # Test and see if we are logged into Azure CLI
+    - name: Azure CLI - Check if logged in
+      shell: az account show
+      args:
+        executable: /bin/bash
+      register: az_account_status
+      failed_when: az_account_status.rc != 0
+      changed_when: false
+      tags:
+        - acr
+
+    - name: Azure CLI - Login using service principal
+      shell: az login --service-principal -u {{ client_id }} -p {{ client_secret }} --tenant {{ tenant_id }}
+      args:
+        executable: /bin/bash
+      when: az_account_status.rc != 0
+      tags:
+        - acr
+
+    - name: Azure CLI - Create Resource Group for ACR
+      shell: az group create --name "{{ resource_group }}" --location "{{ location }}"
+      args:
+        executable: /bin/bash
+      tags:
+        - acr
+
+    - name: Azure CLI - Register Microsoft.ContainerRegistry
+      shell: az provider register --namespace Microsoft.ContainerRegistry
+      args:
+        executable: /bin/bash
+      tags:
+        - acr
+
+    - name: Azure CLI - Create ACR
+      shell: az acr create --resource-group "{{ resource_group }}" --name {{ acr_name }} --sku "{{ sku }}" --location "{{ location }}"
+      args:
+        executable: /bin/bash
+      tags:
+        - acr
+
+    - name: Podman - Build Container
+      shell: podman build -f "{{ build_dir }}/Dockerfile" -t {{ acr_name }}.azurecr.io/{{ image_name }}:{{ image_tag }} .
+      args:
+        chdir: "{{ build_dir }}"
+
+    - name: Azure CLI - Login to ACR
+      shell: az acr login --name {{ acr_name }}
+      args:
+        executable: /bin/bash
+      tags:
+        - acr
+
+    - name: Podman - login to ACR registry
+      shell: podman login {{ acr_name }}.azurecr.io --username {{ client_id }} --password {{ client_secret }}
+      args:
+        executable: /bin/bash
+      tags:
+        - acr
+
+    - name: Podman - Push Container
+      shell: podman push {{ acr_name }}.azurecr.io/{{ image_name }}:{{ image_tag }}
+      args:
+        executable: /bin/bash
+      tags:
+        - acr
+
+...
