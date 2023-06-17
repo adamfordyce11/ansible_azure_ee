@@ -16,4 +16,5 @@ WORKDIR /ansible
 # Add /ansible to PATH
 ENV PATH="/ansible:${PATH}"
 
-CMD ["bash"]
+CMD ["sh", "-c", "while true; do echo long-running-process; sleep 1; done"]
+
