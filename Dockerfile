@@ -10,11 +10,10 @@ RUN pip install -r ~/.ansible/collections/ansible_collections/azure/azcollection
 # https://docs.ansible.com/ansible/latest/collections/community/general/
 RUN ansible-galaxy collection install community.general
 
-
 WORKDIR /ansible
+COPY entry-point.sh /entry-point.sh
 
 # Add /ansible to PATH
 ENV PATH="/ansible:${PATH}"
 
-CMD ["sh", "-c", "while true; do echo long-running-process; sleep 1; done"]
-
+ENTRYPOINT [ "/entry-point.sh" ]
