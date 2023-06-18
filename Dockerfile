@@ -10,6 +10,9 @@ RUN pip install -r ~/.ansible/collections/ansible_collections/azure/azcollection
 # https://docs.ansible.com/ansible/latest/collections/community/general/
 RUN ansible-galaxy collection install community.general
 
+# Create symbolic link
+RUN mkdir -p /__a/externals/node/bin && ln -s /usr/bin/node /__a/externals/node/bin/node
+
 WORKDIR /ansible
 COPY entry-point.sh /entry-point.sh
 
