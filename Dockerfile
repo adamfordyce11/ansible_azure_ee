@@ -1,7 +1,7 @@
 # Dockerfile
 FROM cytopia/ansible:2.13-infra
 
-RUN apk add --no-cache --update --virtual=build linux-headers gcc musl-dev python3-dev libffi-dev openssl-dev cargo make
+RUN apk add --no-cache --update --virtual=build linux-headers gcc musl-dev python3-dev libffi-dev openssl-dev cargo make bash
 
 RUN ansible-galaxy collection install azure.azcollection
 RUN pip install --no-cache-dir --prefer-binary azure-cli==2.34.0
